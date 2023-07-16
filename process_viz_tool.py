@@ -60,7 +60,7 @@ def update_network_graph():
                 G.add_edge(process['name'], sub_process['name'], weight=call_rate)
 
         plt.clf()
-        pos = nx.spring_layout(G)
+        pos = nx.spring_layout(G, seed=42)
 
         node_colors = []
         node_sizes = []
@@ -71,24 +71,26 @@ def update_network_graph():
                 color = get_color(node_data.get('cpuUsage', 0))
                 node_colors.append(color)
                 node_sizes.append(5000)
-                label = f"{node}\nCPU: {node_data.get('cpuUsage', 0):.2f}%\nRAM: {node_data.get('memoryUsage', 0):.2f}%\nCores: {node_data.get('numCores', 0)}"
+                label = f"{node}\n{node_data.get('name')}\nCPU: {node_data.get('cpuUsage', 0):.2f}%\nRAM: {node_data.get('memoryUsage', 0):.2f}%\nCores: {node_data.get('numCores', 0)}"
                 node_labels[node] = label
             else:
                 color = get_color(node_data.get('cpuUsage', 0))
                 node_colors.append(color)
                 node_sizes.append(3000)
-                label = f"{node}\nCPU: {node_data.get('cpuUsage', 0):.2f}%\nRAM: {node_data.get('memoryUsage', 0):.2f}%\nCores: {node_data.get('numCores', 0)}"
+                label = f"{node}\n{node_data.get('name')}\nCPU: {node_data.get('cpuUsage', 0):.2f}%\nRAM: {node_data.get('memoryUsage', 0):.2f}%\nCores: {node_data.get('numCores', 0)}"
                 node_labels[node] = label
 
-        nx.draw(G, pos, with_labels=False, node_color=node_colors, node_size=node_sizes, font_size=10, labels=None, font_color='black', arrows=False, width=1.5, alpha=0.7)
-
         edge_labels = nx.get_edge_attributes(G, 'weight')
+        edge_colors = ['blue' if weight > 50 else 'gray' for (_, _, weight) in G.edges.data('weight')]
+
+        nx.draw(G, pos, with_labels=False, node_color=node_colors, node_size=node_sizes, font_size=10, labels=None, font_color='black', arrows=True, width=1.5, alpha=0.7, edge_color=edge_colors)
+
         nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=10, font_color='blue')
 
         nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=6, font_color='black')
 
         canvas.draw()
-        root.after(2000, update_network_graph)  # Refresh every 2 seconds
+        root.after(800, update_network_graph)  # Refresh every 2 seconds
 
     except Exception as e:
         logging.exception(f"Error in update_network_graph: {e}")
