@@ -5,8 +5,12 @@ import networkx as nx
 import psutil
 import random
 import logging
+import pickle  # To save the prediction model
 from matplotlib.animation import FuncAnimation
 import matplotlib.colors as mcolors
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -90,7 +94,31 @@ def update_network_graph():
         nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=6, font_color='black')
 
         canvas.draw()
-        root.after(800, update_network_graph)  # Refresh every 2 seconds
+        root.after(2000, update_network_graph)  # Refresh every 2 seconds
+
+        # Update the prediction model with random data
+        X = []
+        y = []
+        for node in G.nodes:
+            node_data = G.nodes[node]
+            if G.nodes[node].get('node_type', '') == 'node':
+                X.append([node_data['cpuUsage'], node_data['memoryUsage'], node_data['numCores']])
+                # Simulate random failure (0 for not failed, 1 for failed)
+                y.append(random.choice([0, 1]))
+
+        # Create and train the prediction model (Random Forest Classifier)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        clf = RandomForestClassifier()
+        clf.fit(X_train, y_train)
+
+        # Evaluate the model
+        y_pred = clf.predict(X_test)
+        accuracy = accuracy_score(y_test, y_pred)
+        print("Model Accuracy:", accuracy)
+
+        # Save the model to a file in the same directory as the app
+        with open('prediction_model.pkl', 'wb') as file:
+            pickle.dump(clf, file)
 
     except Exception as e:
         logging.exception(f"Error in update_network_graph: {e}")
