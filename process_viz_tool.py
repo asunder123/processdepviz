@@ -46,12 +46,12 @@ def update_network_graph(frame):
         G = nx.DiGraph()
 
         for process in top_5_processes:
-            G.add_node(process['name'], node_type='tier', state='R', cpuUsage=process['cpuUsage'], memoryUsage=0, numCores=0)
+            G.add_node(process['name'], node_type='tier', state='R', cpuUsage=process['cpuUsage'], memoryUsage=process['memoryUsage'], numCores=process['numCores'])
 
         for process in top_5_processes:
             subprocesses = get_subprocesses(process['name'])
             for sub_process in subprocesses:
-                G.add_node(sub_process['name'], node_type='node', state='G', cpuUsage=sub_process['cpuUsage'], memoryUsage=0, numCores=0)
+                G.add_node(sub_process['name'], node_type='node', state='G', cpuUsage=sub_process['cpuUsage'], memoryUsage=sub_process['memoryUsage'], numCores=sub_process['numCores'])
 
         for process in top_5_processes:
             subprocesses = get_subprocesses(process['name'])
@@ -63,18 +63,23 @@ def update_network_graph(frame):
 
         node_colors = []
         node_sizes = []
+        node_labels = {}
         for node in G.nodes:
             node_data = G.nodes[node]
             if G.nodes[node].get('node_type', '') == 'tier':
                 color = get_color(node_data.get('cpuUsage', 0))
                 node_colors.append(color)
                 node_sizes.append(5000)
+                label = f"{node}\nCPU: {node_data.get('cpuUsage', 0):.2f}%\nRAM: {node_data.get('memoryUsage', 0):.2f}%\nCores: {node_data.get('numCores', 0)}"
+                node_labels[node] = label
             else:
                 color = get_color(node_data.get('cpuUsage', 0))
                 node_colors.append(color)
                 node_sizes.append(3000)
+                label = f"{node}\nCPU: {node_data.get('cpuUsage', 0):.2f}%\nRAM: {node_data.get('memoryUsage', 0):.2f}%\nCores: {node_data.get('numCores', 0)}"
+                node_labels[node] = label
 
-        nx.draw(G, pos, with_labels=True, node_color=node_colors, node_size=node_sizes, font_size=10, labels=None, font_color='black', arrows=False, width=1.5, alpha=0.7)
+        nx.draw(G, pos, with_labels=False, node_color=node_colors, node_size=node_sizes, font_size=10, labels=None, font_color='black', arrows=False, width=1.5, alpha=0.7)
 
         live_process_edges = []
         for process in psutil.process_iter(['name']):
@@ -82,6 +87,8 @@ def update_network_graph(frame):
                 if process.info['name'] in edge:
                     live_process_edges.append(edge)
         nx.draw_networkx_edges(G, pos, edgelist=live_process_edges, edge_color='blue', width=2.0)
+
+        nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=12, font_color='black')
 
     except Exception as e:
         logging.exception(f"Error in update_network_graph: {e}")
@@ -103,7 +110,7 @@ def update_gui():
 
 
 root = tk.Tk()
-root.title("AppDynamics-like Dynamic Network Visualization")
+root.title("Dynamic Network Visualization")
 
 figure = plt.figure(figsize=(12, 8))
 canvas = FigureCanvasTkAgg(figure, master=root)
