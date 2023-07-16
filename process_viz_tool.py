@@ -6,6 +6,7 @@ import psutil
 import random
 import logging
 from matplotlib.animation import FuncAnimation
+import matplotlib.colors as mcolors
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -65,17 +66,16 @@ def update_network_graph(frame):
         for node in G.nodes:
             node_data = G.nodes[node]
             if G.nodes[node].get('node_type', '') == 'tier':
-                color = 'red' if node_data.get('state', '') == 'R' else 'yellow' if node_data.get('state', '') == 'Y' else 'green'
+                color = get_color(node_data.get('cpuUsage', 0))
                 node_colors.append(color)
                 node_sizes.append(5000)
             else:
-                color = 'red' if node_data.get('state', '') == 'R' else 'yellow' if node_data.get('state', '') == 'Y' else 'green'
+                color = get_color(node_data.get('cpuUsage', 0))
                 node_colors.append(color)
                 node_sizes.append(3000)
 
         nx.draw(G, pos, with_labels=True, node_color=node_colors, node_size=node_sizes, font_size=10, labels=None, font_color='black', arrows=False, width=1.5, alpha=0.7)
 
-        # Highlight edges (connections) of live processes in a different color
         live_process_edges = []
         for process in psutil.process_iter(['name']):
             for edge in G.edges:
@@ -85,6 +85,16 @@ def update_network_graph(frame):
 
     except Exception as e:
         logging.exception(f"Error in update_network_graph: {e}")
+
+
+def get_color(cpu_usage):
+    # Define a colormap based on CPU usage
+    cmap = plt.get_cmap('coolwarm')  # Choose a colormap (coolwarm for blue-red)
+    norm = mcolors.Normalize(vmin=0, vmax=100)  # Normalize CPU usage values to [0, 100]
+
+    # Convert CPU usage to a color from the colormap
+    color = cmap(norm(cpu_usage))
+    return color
 
 
 def update_gui():
