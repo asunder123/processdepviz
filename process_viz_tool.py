@@ -39,7 +39,7 @@ def get_subprocesses(main_process_name):
     return subprocesses[:3]
 
 
-def update_network_graph(frame):
+def update_network_graph():
     try:
         top_5_processes = get_running_processes()
 
@@ -56,7 +56,8 @@ def update_network_graph(frame):
         for process in top_5_processes:
             subprocesses = get_subprocesses(process['name'])
             for sub_process in subprocesses:
-                G.add_edge(process['name'], sub_process['name'], weight=1)
+                call_rate = random.randint(1, 100)  # Random call rate for demonstration purposes
+                G.add_edge(process['name'], sub_process['name'], weight=call_rate)
 
         plt.clf()
         pos = nx.spring_layout(G)
@@ -81,32 +82,23 @@ def update_network_graph(frame):
 
         nx.draw(G, pos, with_labels=False, node_color=node_colors, node_size=node_sizes, font_size=10, labels=None, font_color='black', arrows=False, width=1.5, alpha=0.7)
 
-        live_process_edges = []
-        for process in psutil.process_iter(['name']):
-            for edge in G.edges:
-                if process.info['name'] in edge:
-                    live_process_edges.append(edge)
-        nx.draw_networkx_edges(G, pos, edgelist=live_process_edges, edge_color='blue', width=2.0)
+        edge_labels = nx.get_edge_attributes(G, 'weight')
+        nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=10, font_color='blue')
 
-        nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=12, font_color='black')
+        nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=6, font_color='black')
+
+        canvas.draw()
+        root.after(2000, update_network_graph)  # Refresh every 2 seconds
 
     except Exception as e:
         logging.exception(f"Error in update_network_graph: {e}")
 
 
 def get_color(cpu_usage):
-    # Define a colormap based on CPU usage
-    cmap = plt.get_cmap('coolwarm')  # Choose a colormap (coolwarm for blue-red)
-    norm = mcolors.Normalize(vmin=0, vmax=100)  # Normalize CPU usage values to [0, 100]
-
-    # Convert CPU usage to a color from the colormap
+    cmap = plt.get_cmap('coolwarm')
+    norm = mcolors.Normalize(vmin=0, vmax=100)
     color = cmap(norm(cpu_usage))
     return color
-
-
-def update_gui():
-    update_network_graph(0)
-    canvas.draw()
 
 
 root = tk.Tk()
@@ -116,7 +108,6 @@ figure = plt.figure(figsize=(12, 8))
 canvas = FigureCanvasTkAgg(figure, master=root)
 canvas.get_tk_widget().pack()
 
-ani = FuncAnimation(figure, update_network_graph, interval=2000)  # Update every 2 seconds
-ani._start()
+update_network_graph()
 
 root.mainloop()
