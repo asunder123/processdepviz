@@ -1,143 +1,189 @@
-import tkinter as tk
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import torch
+import torch.nn.functional as F
+from torch_geometric.data import Data, DataLoader
+from torch_geometric.nn import MessagePassing, GCNConv
+import psutil
+from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 import networkx as nx
-import psutil
-import random
-import logging
-import pickle  # To save the prediction model
-from matplotlib.animation import FuncAnimation
-import matplotlib.colors as mcolors
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
 
-# Set up logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-
-
-def get_running_processes():
-    processes = []
-    for process in psutil.process_iter(['name', 'cpu_percent', 'memory_percent']):
-        processes.append({
+# Step 1: Prepare the dataset (using psutil to get CPU and memory usage)
+def get_running_processes_data():
+    processes_data = []
+    for process in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
+        processes_data.append({
+            'pid': process.info['pid'],
             'name': process.info['name'],
             'cpuUsage': process.info['cpu_percent'],
             'memoryUsage': process.info['memory_percent'],
-            'numCores': psutil.cpu_count(logical=False)
         })
-    processes.sort(key=lambda x: x['cpuUsage'], reverse=True)
-    top_5_processes = processes[:5]
-    return top_5_processes
+    return processes_data
+
+processes_data = get_running_processes_data()
+
+# Print the number of processes and some sample data
+num_processes = len(processes_data)
+print("Line 22: Number of processes:", num_processes)
+print("Line 23: Sample process data:", processes_data[0])
+
+# Prepare the feature matrix (X) and target variable (y)
+X = [[process['cpuUsage'], process['memoryUsage']] for process in processes_data]
+y = [1 if process['cpuUsage'] > 50 or process['memoryUsage'] > 50 else 0 for process in processes_data]
+
+# Convert NumPy arrays to PyTorch tensors
+X = torch.tensor(X, dtype=torch.float)
+y = torch.tensor(y, dtype=torch.long)
+
+# Step 2: Create edge index for a directed graph (process dependencies)
+num_nodes = len(processes_data)
+edge_index = []
+for i in range(num_nodes):
+    for j in range(num_nodes):
+        if i != j:
+            edge_index.append([i, j])
+edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+
+# Remove duplicates and self-loops to handle disconnected nodes
+def remove_self_loops(edge_index):
+    mask = edge_index[0] != edge_index[1]
+    edge_index = edge_index[:, mask]
+    return edge_index
+
+edge_index = remove_self_loops(edge_index)
+
+# Handle out-of-bound indices in edge_index
+num_nodes = X.size(0)
+edge_index = edge_index[:, edge_index[0] < num_nodes]
+edge_index = edge_index[:, edge_index[1] < num_nodes]
+
+# Print the number of edges and some sample data
+num_edges = edge_index.size(1)
+print("Line 49: Number of edges:", num_edges)
+print("Line 50: Sample edge data:", edge_index[:, 0])
+
+# Step 3: Define the GNN Model
+class MyGNN(MessagePassing):
+    def __init__(self):
+        super(MyGNN, self).__init__(aggr='add')
+        self.conv1 = GCNConv(2, 16)
+        self.conv2 = GCNConv(16, 2)
+
+    def forward(self, x, edge_index):
+        # Precheck dimensions before convolution
+        if x.size(0) < edge_index.max().item() + 1:
+            x = F.pad(x, (0, 0, 0, edge_index.max().item() + 1 - x.size(0)), "constant", 0)
+        x = self.conv1(x, edge_index)
+        x = F.relu(x)
+        x = self.conv2(x, edge_index)
+        return x
+
+# Step 4: Train the GNN Model
+# Split the data into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Create a PyTorch DataLoader for handling batches
+train_data = Data(x=X_train, edge_index=edge_index)
+
+# Define the batch size
+batch_size = 20
 
 
-def get_subprocesses(main_process_name):
-    subprocesses = []
-    for process in psutil.process_iter(['name', 'cpu_percent', 'memory_percent']):
-        if process.info['name'] == main_process_name:
-            subprocesses.append({
-                'name': f"Subprocess-{random.randint(1, 100)}",
-                'cpuUsage': process.info['cpu_percent'],
-                'memoryUsage': process.info['memory_percent'],
-                'numCores': psutil.cpu_count(logical=False)
-            })
-    return subprocesses[:3]
 
+# Create the DataLoader
+train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
 
-def update_network_graph():
+# Step 5: Save the GNN Model
+gnn_model = MyGNN()
+optimizer = torch.optim.Adam(gnn_model.parameters(), lr=0.01)
+
+gnn_model.train()
+
+data_iterator = iter(train_loader)
+
+# Initialize variables for iterative batch size adjustment
+batch_size = 10
+max_batch_size = 200
+saved_model = False
+
+while not saved_model and batch_size <= max_batch_size:
+    # Re-create DataLoader with updated batch size
+    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
+
+    for epoch in range(100):  # Train for 100 epochs (you can adjust this value)
+        try:
+            data = next(data_iterator)
+        except StopIteration:
+            # If the DataLoader reaches the end, reset the iterator
+            data_iterator = iter(train_loader)
+            data = next(data_iterator)
+
+        if data.num_graphs == 0:
+            print("Line 95: Empty graph encountered, skipping batch.")  # Debug statement
+            continue  # Skip empty graphs
+
+        optimizer.zero_grad()
+        out = gnn_model(data.x, data.edge_index)
+
+        # Gather the target labels for each node in the batch
+        target_labels = y_train[data.ptr: data.ptr + data.num_graphs * data.num_nodes]
+
+        try:
+            loss = F.cross_entropy(out, target_labels)
+        except IndexError:
+            # If there is an IndexError, continue to the next batch
+            continue
+
+        loss.backward()
+        optimizer.step()
+
+        # Update the pointer to the next batch
+        data.ptr += data.num_graphs * data.num_nodes
+
     try:
-        top_5_processes = get_running_processes()
-
-        G = nx.DiGraph()
-
-        for process in top_5_processes:
-            G.add_node(process['name'], node_type='tier', state='R', cpuUsage=process['cpuUsage'], memoryUsage=process['memoryUsage'], numCores=process['numCores'])
-
-        for process in top_5_processes:
-            subprocesses = get_subprocesses(process['name'])
-            for sub_process in subprocesses:
-                G.add_node(sub_process['name'], node_type='node', state='G', cpuUsage=sub_process['cpuUsage'], memoryUsage=sub_process['memoryUsage'], numCores=sub_process['numCores'])
-
-        for process in top_5_processes:
-            subprocesses = get_subprocesses(process['name'])
-            for sub_process in subprocesses:
-                call_rate = random.randint(1, 100)  # Random call rate for demonstration purposes
-                G.add_edge(process['name'], sub_process['name'], weight=call_rate)
-
-        plt.clf()
-        pos = nx.spring_layout(G, seed=42)
-
-        node_colors = []
-        node_sizes = []
-        node_labels = {}
-        for node in G.nodes:
-            node_data = G.nodes[node]
-            if G.nodes[node].get('node_type', '') == 'tier':
-                color = get_color(node_data.get('cpuUsage', 0))
-                node_colors.append(color)
-                node_sizes.append(5000)
-                label = f"{node}\n{node_data.get('name')}\nCPU: {node_data.get('cpuUsage', 0):.2f}%\nRAM: {node_data.get('memoryUsage', 0):.2f}%\nCores: {node_data.get('numCores', 0)}"
-                node_labels[node] = label
-            else:
-                color = get_color(node_data.get('cpuUsage', 0))
-                node_colors.append(color)
-                node_sizes.append(3000)
-                label = f"{node}\n{node_data.get('name')}\nCPU: {node_data.get('cpuUsage', 0):.2f}%\nRAM: {node_data.get('memoryUsage', 0):.2f}%\nCores: {node_data.get('numCores', 0)}"
-                node_labels[node] = label
-
-        edge_labels = nx.get_edge_attributes(G, 'weight')
-        edge_colors = ['blue' if weight > 50 else 'gray' for (_, _, weight) in G.edges.data('weight')]
-
-        nx.draw(G, pos, with_labels=False, node_color=node_colors, node_size=node_sizes, font_size=10, labels=None, font_color='black', arrows=True, width=1.5, alpha=0.7, edge_color=edge_colors)
-
-        nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=10, font_color='blue')
-
-        nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=6, font_color='black')
-
-        canvas.draw()
-        root.after(2000, update_network_graph)  # Refresh every 2 seconds
-
-        # Update the prediction model with random data
-        X = []
-        y = []
-        for node in G.nodes:
-            node_data = G.nodes[node]
-            if G.nodes[node].get('node_type', '') == 'node':
-                X.append([node_data['cpuUsage'], node_data['memoryUsage'], node_data['numCores']])
-                # Simulate random failure (0 for not failed, 1 for failed)
-                y.append(random.choice([0, 1]))
-
-        # Create and train the prediction model (Random Forest Classifier)
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-        clf = RandomForestClassifier()
-        clf.fit(X_train, y_train)
-
-        # Evaluate the model
-        y_pred = clf.predict(X_test)
-        accuracy = accuracy_score(y_test, y_pred)
-        print("Model Accuracy:", accuracy)
-
-        # Save the model to a file in the same directory as the app
-        with open('prediction_model.pkl', 'wb') as file:
-            pickle.dump(clf, file)
-
+        # Attempt to save the model
+        torch.save(gnn_model.state_dict(), 'gnn_model.pt')
+        saved_model = True
     except Exception as e:
-        logging.exception(f"Error in update_network_graph: {e}")
+        print(f"Line 123: Error saving the model: {e}")
+        # Increase the batch size and reset the model
+        batch_size += 10
+        gnn_model = MyGNN()
+        optimizer = torch.optim.Adam(gnn_model.parameters(), lr=0.01)
+        gnn_model.train()
+        data_iterator = iter(train_loader)
 
+# Check if the model was saved successfully
+if saved_model:
+    print(f"Line 134: Model saved successfully with batch size: {batch_size}")
+else:
+    print("Line 136: Model could not be saved even after adjusting the batch size.")
 
-def get_color(cpu_usage):
-    cmap = plt.get_cmap('coolwarm')
-    norm = mcolors.Normalize(vmin=0, vmax=100)
-    color = cmap(norm(cpu_usage))
-    return color
+# Step 6: Load the saved GNN Model (optional - for demonstration purposes)
+loaded_gnn_model = MyGNN()
+loaded_gnn_model.load_state_dict(torch.load('gnn_model.pt'))
+loaded_gnn_model.eval()
 
+# Step 7: Use the GNN Model for Prediction
+with torch.no_grad():
+    test_data = Data(x=X_test, edge_index=edge_index)
+    out = loaded_gnn_model(test_data.x, test_data.edge_index)
+    predicted_labels = out.argmax(dim=1)
 
-root = tk.Tk()
-root.title("Dynamic Network Visualization")
+# Step 8: Evaluate the Model
+accuracy = (predicted_labels == y_test).sum().item() / y_test.size(0)
+print("Line 149: Test Accuracy:", accuracy)
 
-figure = plt.figure(figsize=(12, 8))
-canvas = FigureCanvasTkAgg(figure, master=root)
-canvas.get_tk_widget().pack()
+# Step 9: Visualize the Process Dependencies (Graph Visualization)
+# Create a networkx graph from the edge index
+G = nx.DiGraph()
+for edge in edge_index.t().tolist():
+    G.add_edge(edge[0], edge[1])
 
-update_network_graph()
+# Draw the graph
+pos = nx.spring_layout(G, seed=42)
+nx.draw(G, pos, with_labels=True, node_color='skyblue', node_size=2000, font_size=10)
+plt.title("Process Dependencies Graph")
+plt.show()
 
-root.mainloop()
+# Note: This code assumes a directed graph for process dependencies. You may need to create a different graph
+# structure based on your specific use case.
